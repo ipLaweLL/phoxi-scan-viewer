@@ -160,9 +160,13 @@ class ScanViewer:
         self._candidate_metrics = gui.Label("No results")
         self._candidate_reason = gui.Label("Evidence: —")
         self._candidate_translation = gui.Label("CAD origin (mm): —")
-        self._candidate_rotation = gui.Label("Rotation: —")
+        self._candidate_rotation = gui.Label("Rotation matrix R:")
+        self._candidate_r0 = gui.Label("—")
+        self._candidate_r1 = gui.Label("—")
+        self._candidate_r2 = gui.Label("—")
         for label in (self._candidate_metrics, self._candidate_reason,
-                      self._candidate_translation, self._candidate_rotation):
+                      self._candidate_translation, self._candidate_rotation,
+                      self._candidate_r0, self._candidate_r1, self._candidate_r2):
             self._candidate_section.add_child(label)
         self._preview_candidate = gui.Checkbox("Preview selected candidate (unverified)")
         self._preview_candidate.set_on_checked(self._toggle_candidate_preview)
@@ -336,7 +340,9 @@ class ScanViewer:
         self._candidate_metrics.text = "No results"
         self._candidate_reason.text = "Evidence: —"
         self._candidate_translation.text = "CAD origin (mm): —"
-        self._candidate_rotation.text = "Rotation: —"
+        self._candidate_rotation.text = "Rotation matrix R:"
+        for label in (self._candidate_r0, self._candidate_r1, self._candidate_r2):
+            label.text = "—"
         self._loc_status.text = "Status: not run"
         self._loc_metrics.text = "Coverage / inliers / RMSE: —"
         self._loc_pose.text = "Translation (mm): —"
@@ -415,10 +421,10 @@ class ScanViewer:
         pose = np.asarray(row["pose"], dtype=float)
         x, y, z = pose[:3, 3]
         self._candidate_translation.text = f"CAD origin: {x:.2f}, {y:.2f}, {z:.2f} mm"
-        self._candidate_rotation.text = (
-            "R rows: " + " / ".join(
-                ",".join(f"{v:+.2f}" for v in matrix_row)
-                for matrix_row in pose[:3, :3]))
+        for label, matrix_row in zip(
+                (self._candidate_r0, self._candidate_r1, self._candidate_r2),
+                pose[:3, :3]):
+            label.text = "  ".join(f"{value:+.3f}" for value in matrix_row)
         if self._preview_candidate.checked:
             self._display_candidate(index)
         self.window.set_needs_layout()
