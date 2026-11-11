@@ -43,12 +43,13 @@ class PointCloudViewport:
         geometry = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
         if self._mode == "Texture" and frame.colors is not None:
             geometry.colors = o3d.utility.Vector3dVector(frame.colors.astype(np.float64))
-        elif self._mode == "Depth":
+        elif self._mode in ("Depth", "Depth - Grayscale"):
             low, high = np.percentile(points[:, 2], (2, 98))
             fraction = np.clip((points[:, 2] - low) / max(high - low, 1e-6), 0, 1)
-            colors = np.column_stack((0.17 + 0.83 * fraction,
+            colors = (np.repeat(fraction[:, None], 3, axis=1)
+                      if self._mode == "Depth - Grayscale" else np.column_stack((0.17 + 0.83 * fraction,
                                       0.37 + 0.39 * fraction,
-                                      0.92 - 0.60 * fraction))
+                                      0.92 - 0.60 * fraction)))
             geometry.colors = o3d.utility.Vector3dVector(colors)
         else:
             geometry.paint_uniform_color((0.92, 0.95, 1.0))
