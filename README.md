@@ -48,6 +48,41 @@ The right-hand panel scrolls and groups controls into collapsible Scanner, Scann
 - Frame Information reports valid point count, acquisition time, and observed Z range.
 - Color depth represents scanner-coordinate Z, **not** physical distance from the current orbit camera or plane-relative height. Printed labels may only be visible in Texture mode.
 
+## Single-part localisation in the viewer
+
+Install the extra solver dependencies **from the repository root**:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m pip install -r localisation\\requirements.txt
+```
+
+Launch the GUI with the bundled test point cloud:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m viewer localisation\\examples\\plate_a.ply
+```
+
+In **SINGLE-PART LOCALISATION**, click **Choose CAD** and select
+`localisation\\examples\\plate_a.step`. Keep the voxel size at 1.0 mm and
+**Scan origin is camera optical centre** checked for this example, then select
+**Locate Part**. An accepted matching pose draws a semi-transparent green CAD
+mesh over the scan. The panel reports candidate count, model coverage, scan
+inliers, inlier RMSE, runtime and translation. **Clear Overlay** removes it.
+
+The checkbox must only be enabled for point clouds whose (0,0,0) is the
+scanner optical centre. For scans already transformed into other coordinate
+frames, uncheck it; incorrect viewpoint coordinates can invalidate scoring.
+STEP dimensions are assumed to be millimetres; STL is also assumed mm in
+this GUI. Real-world validation and adjustable units/ROI are upcoming work.
+
+The solver uses a temporary PLY for the current displayed XYZ frame,
+including scans acquired live from PhoXi. It runs in the existing background
+worker so the GUI remains responsive. Ambiguous and no-match results **do
+not** render a CAD pose, even if a diagnostic best candidate is available.
+Running a new scan clears any previous overlay. The localisation module is
+loaded only when requested; scanner viewing still works without its optional
+dependencies.
+
 ## Tests
 
 Run the acquisition and frame-conversion tests with `python -m unittest discover -s tests`. These tests use a simulated PhoXi device. Live triggering requires a running PhoXi Control instance and a reachable scanner or file camera.
