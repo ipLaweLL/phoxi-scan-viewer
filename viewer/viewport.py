@@ -1,5 +1,4 @@
 """Open3D viewport with deterministic display-range controls (XYZ is never modified)."""
-import colorsys
 import numpy as np
 import open3d as o3d
 
@@ -32,10 +31,14 @@ def depth_colors(z, mode="Depth - Hue", strategy="Smart", manual=None, gamma=1.0
     if mode == "Depth - Grayscale":
         rgb = np.repeat(fraction[:, None], 3, axis=1)
     else:
-        # Smooth blue -> cyan -> green -> yellow -> red ramp.
-        hue = (2.0 / 3.0) * (1.0 - fraction)
-        rgb = np.array([colorsys.hsv_to_rgb(float(h), 0.88, 0.92)
-                        for h in hue], dtype=np.float64)
+        # Vectorized, perceptually readable blue -> cyan -> green -> yellow -> red.
+        # Avoid Python per-point loops: PhoXi frames routinely exceed 1M points.
+        stops = [0.0, 0.25, 0.5, 0.75, 1.0]
+        palette = np.array([[0.12, 0.25, 0.94], [0.05, 0.85, 0.92],
+                            [0.12, 0.79, 0.36], [0.98, 0.88, 0.17],
+                            [0.92, 0.17, 0.12]])
+        rgb = np.column_stack([np.interp(fraction, stops, palette[:, i])
+                               for i in range(3)])
     return rgb, (lo, hi)
 
 
@@ -122,7 +125,9 @@ class PointCloudViewport:
         cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
         self._display_range = None
         if self._mode == "Texture" and frame.colors is not None:
-            cloud.colors = o3d.utility.Vector3dVector(np.asarray(frame.colors, dtype=np.float64))
+            texture = np.asarray(frame.colors, dtype=np.float64)
+            cloud.colors = o3d.utility.Vector3dVector(
+                np.clip(texture, 0, 1) ** (1.0 / self._gamma))
         elif self._mode in ("Depth - Hue", "Depth - Grayscale", "Depth"):
             mode = "Depth - Grayscale" if self._mode == "Depth - Grayscale" else "Depth - Hue"
             colors, self._display_range = depth_colors(
