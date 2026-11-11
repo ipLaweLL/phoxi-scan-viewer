@@ -83,6 +83,35 @@ Running a new scan clears any previous overlay. The localisation module is
 loaded only when requested; scanner viewing still works without its optional
 dependencies.
 
+## Preprocessing / plane segmentation experiment
+
+Load a live PhoXi frame or saved PLY/PCD, expand **PREPROCESSING / PLANE**,
+set a plane distance threshold (0.35 mm initially), and click **Detect Plane**.
+The background worker fits the **largest planar surface** with Open3D RANSAC.
+This is **not guaranteed to be the supporting table**. In a tight ROI containing
+mostly a 2.5 mm coin, the detected plane may be the *coin's top face*.
+Do **not** turn on foreground localisation until you verify the classification.
+
+Choose a preview:
+- **Raw**: the original texture/depth scan.
+- **Combined**: RANSAC plane **orange/red**, non-plane foreground **cyan**.
+- **Plane**: only the detected plane.
+- **Foreground**: only the remaining points.
+
+The panel reports plane/foreground counts, plane fraction, equation and
+axis-aligned plane-point extents. These are diagnostics, not automated checks
+that a supporting table was found. Confirm that the coin remains intact in
+**Foreground** and the board has been selected in **Plane**, then explicitly
+check **Use inspected foreground for Locate Part**. The next Locate Part run
+uses only the foreground points. Unchecking reverts to the raw scan; triggering
+a new frame discards the segmentation. This process does not alter the original
+scan or registration acceptance thresholds.
+
+If the plane finder selects the coin face, *leave the foreground option off*.
+Use a somewhat larger ROI containing sufficient supporting table, or wait for
+the later object-aware segmentation phase. Very little table in the ROI is a
+failure case for naïve largest-plane RANSAC.
+
 ## Candidate diagnostics for live-scene failures
 
 Each Locate Part run now retains **all refined candidates**, even when the
