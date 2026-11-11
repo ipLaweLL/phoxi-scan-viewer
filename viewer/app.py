@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .frames import load_point_cloud
 from .phoxi import PhoXiScanner
+from .localisation import locate_frame
 from .viewport import PointCloudViewport, gui
 
 LOG = logging.getLogger(__name__)
@@ -23,6 +24,8 @@ class ScanViewer:
         self._profile_names = []
         self._active_profile = None
         self._viewport = PointCloudViewport(self.window.renderer)
+        self._cad_path = None
+        self._current_frame = None
 
         em = self.window.theme.font_size
         spacing = int(0.55 * em)
@@ -119,6 +122,31 @@ class ScanViewer:
         for label in (self._source, self._points, self._time, self._zrange):
             self._frame_section.add_child(label)
 
+        self._localisation_section = gui.CollapsableVert("SINGLE-PART LOCALISATION", spacing)
+        self._sidebar.add_child(self._localisation_section)
+        self._cad_label = gui.Label("CAD: none")
+        self._localisation_section.add_child(self._cad_label)
+        self._open_cad = self._button("Choose CAD (STEP / STL)", self._open_cad_dialog,
+                                     self._localisation_section)
+        self._localisation_section.add_child(gui.Label("Registration voxel (mm)"))
+        self._voxel_input = gui.NumberEdit(gui.NumberEdit.DOUBLE)
+        self._voxel_input.set_value(1.0)
+        self._localisation_section.add_child(self._voxel_input)
+        self._viewpoint_origin = gui.Checkbox("Scan origin is camera optical centre")
+        self._viewpoint_origin.checked = True
+        self._localisation_section.add_child(self._viewpoint_origin)
+        locate_row = gui.Horiz(int(0.4 * em))
+        self._locate = self._button("Locate Part", self._locate_part, locate_row)
+        self._clear_overlay = self._button("Clear Overlay", self._clear_localisation, locate_row)
+        self._localisation_section.add_child(locate_row)
+        self._loc_status = gui.Label("Status: not run")
+        self._loc_metrics = gui.Label("Coverage / inliers / RMSE: —")
+        self._loc_pose = gui.Label("Translation (mm): —")
+        self._loc_runtime = gui.Label("Runtime: —")
+        for label in (self._loc_status, self._loc_metrics,
+                      self._loc_pose, self._loc_runtime):
+            self._localisation_section.add_child(label)
+
         self._status = gui.Label("Discover a scanner or open a point cloud.")
         self._status.background_color = gui.Color(0.075, 0.095, 0.125)
         for widget in (self._viewport.widget, self._sidebar, self._status):
@@ -155,6 +183,11 @@ class ScanViewer:
         self._apply_profile.enabled = ready and connected and bool(self._profile_names)
 
         self._open.enabled = ready
+        self._open_cad.enabled = ready
+        self._voxel_input.enabled = ready
+        self._viewpoint_origin.enabled = ready
+        self._locate.enabled = ready and self._current_frame is not None and self._cad_path is not None
+        self._clear_overlay.enabled = ready and self._has_frame
         self._reset.enabled = self._mode.enabled = self._has_frame
         for control in (self._screenshot, self._smart, self._full, self._manual_button,
                         self._min_depth, self._max_depth, self._gamma_slider, self._axes):
@@ -250,6 +283,67 @@ class ScanViewer:
         self._submit(f"Applying scanner profile {name}…",
                      lambda: self._scanner.set_profile(name), self._show_profiles)
 
+    def _open_cad_dialog(self):
+        dialog = gui.FileDialog(gui.FileDialog.OPEN, "Choose CAD model", self.window.theme)
+        dialog.add_filter(".step .stp .stl", "CAD files (.step, .stp, .stl)")
+        dialog.set_on_cancel(self.window.close_dialog)
+
+        def chosen(path):
+            self.window.close_dialog()
+            self._cad_path = Path(path)
+            self._cad_label.text = f"CAD: {self._cad_path.name}"
+            self._clear_localisation()
+            self._update_controls()
+
+        dialog.set_on_done(chosen)
+        self.window.show_dialog(dialog)
+
+    def _clear_localisation(self):
+        self._viewport.clear_cad_overlay()
+        self._loc_status.text = "Status: not run"
+        self._loc_metrics.text = "Coverage / inliers / RMSE: —"
+        self._loc_pose.text = "Translation (mm): —"
+        self._loc_runtime.text = "Runtime: —"
+
+    def _locate_part(self):
+        if self._current_frame is None or self._cad_path is None:
+            return
+        voxel = self._voxel_input.double_value
+        if not (0.05 <= voxel <= 100):
+            self.window.show_message_box("Invalid voxel size", "Voxel must be between 0.05 and 100 mm.")
+            return
+        frame = self._current_frame
+        cad = self._cad_path
+        viewpoint = self._viewpoint_origin.checked
+        self._clear_localisation()
+        self._loc_status.text = "Status: running…"
+        self._submit("Localising single part…",
+                     lambda: locate_frame(frame, cad, voxel=voxel,
+                                          viewpoint_is_origin=viewpoint),
+                     self._show_localisation)
+
+    def _show_localisation(self, payload):
+        result, pose, candidate, mesh = payload
+        status = (result["assisted"] or result["mesh_only"])["status"]
+        self._loc_status.text = f"Status: {status} ({result['candidate_count']} candidates)"
+        self._loc_runtime.text = f"Runtime: {result['runtime_seconds']:.2f} s"
+        if candidate is not None:
+            rmse = candidate.get("inlier_rmse_mm")
+            error = "—" if rmse is None else f"{rmse:.3f} mm"
+            self._loc_metrics.text = (
+                f"Coverage {candidate['model_coverage']:.1%} | "
+                f"Inliers {candidate['scan_inlier_fraction']:.1%} | "
+                f"RMSE {error}")
+        if pose is not None and mesh is not None:
+            self._viewport.show_cad_overlay(mesh, pose)
+            x, y, z = pose[:3, 3]
+            self._loc_pose.text = f"Translation: {x:.2f}, {y:.2f}, {z:.2f} mm"
+            self._status.text = "CAD overlay shows the accepted CAD-to-scan pose."
+        else:
+            self._loc_pose.text = "No accepted pose; no overlay shown."
+            self._status.text = f"Localisation {status}: inspect scene and CAD."
+        self.window.set_needs_layout()
+
     def _set_contrast(self, strategy):
         self._viewport.set_contrast(strategy)
         self._status.text = f"Depth contrast: {strategy}."
@@ -309,6 +403,8 @@ class ScanViewer:
                      lambda frame: self._show_frame(frame, fit=True))
 
     def _show_frame(self, frame, *, fit):
+        self._current_frame = frame
+        self._clear_localisation()
         self._viewport.show_frame(frame, fit=fit)
         self._has_frame = True
         self._source.text = frame.source if frame.frame_id is None else f"{frame.source} · frame {frame.frame_id}"
@@ -317,6 +413,7 @@ class ScanViewer:
         z = frame.points[:, 2]
         self._zrange.text = f"Z range: {z.min():.1f} .. {z.max():.1f} mm"
         self._status.text = "Frame displayed. Drag to orbit · Shift-drag to pan · Scroll to zoom."
+        self._update_controls()
         self.window.set_needs_layout()
 
     def _begin_shutdown(self):
