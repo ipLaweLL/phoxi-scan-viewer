@@ -1,0 +1,216 @@
+[
+  {
+    "scan": "plate_a",
+    "cad": "plate_a.step",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "match",
+      "translation_error_mm": 0.114,
+      "rotation_error_deg": 0.146,
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "assisted": {
+      "status": "match",
+      "translation_error_mm": 0.114,
+      "rotation_error_deg": 0.146,
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "runtime_seconds": 2.484
+  },
+  {
+    "scan": "plate_a",
+    "cad": "plate_b.step",
+    "cad_present": false,
+    "mesh_only": {
+      "status": "ambiguous",
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "contradicted"
+        }
+      ]
+    },
+    "assisted": {
+      "status": "no_match"
+    },
+    "runtime_seconds": 2.462
+  },
+  {
+    "scan": "plate_b",
+    "cad": "plate_b.step",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "match",
+      "translation_error_mm": 0.1,
+      "rotation_error_deg": 0.123,
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "assisted": {
+      "status": "match",
+      "translation_error_mm": 0.1,
+      "rotation_error_deg": 0.123,
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "runtime_seconds": 3.217
+  },
+  {
+    "scan": "plate_b",
+    "cad": "plate_a.step",
+    "cad_present": false,
+    "mesh_only": {
+      "status": "ambiguous",
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "contradicted"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "assisted": {
+      "status": "no_match"
+    },
+    "runtime_seconds": 3.899
+  },
+  {
+    "scan": "bracket",
+    "cad": "bracket.step",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "match",
+      "translation_error_mm": 0.104,
+      "rotation_error_deg": 0.162,
+      "feature_checks": []
+    },
+    "assisted": null,
+    "runtime_seconds": 3.518
+  },
+  {
+    "scan": "bracket",
+    "cad": "bracket.stl",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "match",
+      "translation_error_mm": 0.104,
+      "rotation_error_deg": 0.163,
+      "feature_checks": []
+    },
+    "assisted": null,
+    "runtime_seconds": 3.749
+  },
+  {
+    "scan": "bracket",
+    "cad": "plate_a.step",
+    "cad_present": false,
+    "mesh_only": {
+      "status": "no_match"
+    },
+    "assisted": {
+      "status": "no_match"
+    },
+    "runtime_seconds": 3.91
+  },
+  {
+    "scan": "rounded",
+    "cad": "rounded.step",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "match",
+      "translation_error_mm": 0.08,
+      "rotation_error_deg": 0.177,
+      "feature_checks": []
+    },
+    "assisted": null,
+    "runtime_seconds": 2.854
+  },
+  {
+    "scan": "partial_plate",
+    "cad": "plate_a.step",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "match",
+      "translation_error_mm": 0.094,
+      "rotation_error_deg": 0.239,
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "assisted": {
+      "status": "match",
+      "translation_error_mm": 0.094,
+      "rotation_error_deg": 0.239,
+      "feature_checks": [
+        {
+          "id": "holes/0",
+          "state": "supported"
+        },
+        {
+          "id": "holes/1",
+          "state": "supported"
+        }
+      ]
+    },
+    "runtime_seconds": 2.73
+  },
+  {
+    "scan": "symmetric_plate",
+    "cad": "plain_plate.step",
+    "cad_present": true,
+    "mesh_only": {
+      "status": "ambiguous",
+      "feature_checks": []
+    },
+    "assisted": null,
+    "runtime_seconds": 2.396
+  }
+]

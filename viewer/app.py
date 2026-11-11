@@ -1,0 +1,202 @@
+"""Desktop UI and serialized acquisition commands."""
+from concurrent.futures import ThreadPoolExecutor
+import logging
+from pathlib import Path
+
+from .frames import load_point_cloud
+from .phoxi import PhoXiScanner
+from .viewport import PointCloudViewport, gui
+
+LOG = logging.getLogger(__name__)
+
+
+class ScanViewer:
+    def __init__(self, app):
+        self.window = app.create_window("PhoXi Scan Viewer", 1280, 800)
+        self._scanner = PhoXiScanner()
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phoxi")
+        self._pending = None
+        self._closing = False
+        self._ready_to_close = False
+        self._device_id = None
+        self._has_frame = False
+        self._viewport = PointCloudViewport(self.window.renderer)
+
+        em = self.window.theme.font_size
+        self._sidebar_width = int(18 * em)
+        self._sidebar = gui.Vert(int(0.55 * em), gui.Margins(em, em, em, em))
+        self._sidebar.background_color = gui.Color(0.095, 0.12, 0.16)
+        self._sidebar.add_child(gui.Label("SCANNER"))
+        self._devices = gui.Combobox()
+        self._devices.set_on_selection_changed(self._choose_device)
+        self._sidebar.add_child(self._devices)
+        self._refresh = self._button("Discover", self.discover)
+        self._scanner_id = gui.TextEdit()
+        self._scanner_id.placeholder_text = "Device ID (for example SED-134)"
+        self._scanner_id.set_on_text_changed(lambda _value: self._update_controls())
+        self._sidebar.add_child(self._scanner_id)
+        self._connect = self._button("Connect", self._toggle_connection)
+        self._trigger = self._button("Trigger Scan", self._trigger_scan)
+        self._trigger.background_color = gui.Color(0.16, 0.37, 0.66)
+        self._open = self._button("Open PLY / PCD", self._open_dialog)
+
+        self._sidebar.add_fixed(int(em))
+        self._sidebar.add_child(gui.Label("3D VIEW"))
+        self._mode = gui.Combobox()
+        for mode in ("Texture", "White", "Depth"):
+            self._mode.add_item(mode)
+        self._mode.set_on_selection_changed(lambda mode, _index: self._viewport.set_mode(mode))
+        self._sidebar.add_child(self._mode)
+        self._sidebar.add_child(gui.Label("Point size"))
+        size = gui.Slider(gui.Slider.INT)
+        size.set_limits(1, 8)
+        size.int_value = 2
+        size.set_on_value_changed(self._viewport.set_point_size)
+        self._sidebar.add_child(size)
+        self._reset = self._button("Reset View", self._viewport.reset_view)
+
+        self._sidebar.add_fixed(int(em))
+        self._sidebar.add_child(gui.Label("FRAME"))
+        self._source = gui.Label("No frame")
+        self._points = gui.Label("Valid points: —")
+        self._time = gui.Label("Capture: —")
+        for label in (self._source, self._points, self._time):
+            self._sidebar.add_child(label)
+
+        self._status = gui.Label("Discover a scanner or open a point cloud.")
+        self._status.background_color = gui.Color(0.075, 0.095, 0.125)
+        for widget in (self._viewport.widget, self._sidebar, self._status):
+            self.window.add_child(widget)
+        self.window.set_on_layout(self._layout)
+        self.window.set_on_tick_event(self._tick)
+        self.window.set_on_close(self._close)
+        self._update_controls()
+
+    def _button(self, title, callback):
+        button = gui.Button(title)
+        button.set_on_clicked(callback)
+        self._sidebar.add_child(button)
+        return button
+
+    def _layout(self, _context):
+        rect = self.window.content_rect
+        sidebar_width = min(self._sidebar_width, rect.width // 2)
+        status_height = int(self.window.theme.font_size * 1.9)
+        height = max(1, rect.height - status_height)
+        self._viewport.widget.frame = gui.Rect(rect.x, rect.y, rect.width - sidebar_width, height)
+        self._sidebar.frame = gui.Rect(rect.get_right() - sidebar_width, rect.y, sidebar_width, height)
+        self._status.frame = gui.Rect(rect.x, rect.y + height, rect.width, status_height)
+
+    def _update_controls(self):
+        ready = self._pending is None and not self._closing
+        connected = self._device_id is not None
+        self._refresh.enabled = self._devices.enabled = self._scanner_id.enabled = ready and not connected
+        self._connect.enabled = ready and (connected or bool(self._scanner_id.text_value.strip()))
+        self._connect.text = "Disconnect" if connected else "Connect"
+        self._trigger.enabled = ready and connected
+        self._open.enabled = ready
+        self._reset.enabled = self._mode.enabled = self._has_frame
+
+    def _submit(self, label, work, complete):
+        self._status.text = label
+        self._pending = (self._worker.submit(work), complete)
+        self._update_controls()
+
+    def _tick(self):
+        if self._pending is None or not self._pending[0].done():
+            return False
+        future, complete = self._pending
+        self._pending = None
+        try:
+            result = future.result()
+            if not self._closing:
+                complete(result)
+        except Exception as exc:
+            LOG.exception("Viewer command failed")
+            if not self._closing:
+                self._status.text = str(exc)
+                self.window.show_message_box("Command failed", str(exc))
+        if self._closing:
+            if self._ready_to_close:
+                self.window.close()
+                return False
+            self._begin_shutdown()
+        else:
+            self._update_controls()
+        return True
+
+    def discover(self):
+        self._submit("Discovering scanners…", self._scanner.discover, self._show_devices)
+
+    def _show_devices(self, devices):
+        self._devices.clear_items()
+        for name in devices:
+            self._devices.add_item(name)
+        if devices:
+            self._devices.selected_index = 0
+            self._choose_device(devices[0], 0)
+        self._status.text = f"Scanners found: {len(devices)}" if devices else "No scanners discovered. Check PhoXi Control."
+
+    def _choose_device(self, name, _index):
+        self._scanner_id.text_value = name
+        self._update_controls()
+
+    def _toggle_connection(self):
+        if self._device_id is not None:
+            self._device_id = None
+            self._submit("Disconnecting…", self._scanner.disconnect,
+                         lambda _: setattr(self._status, "text", "Scanner disconnected."))
+        else:
+            self._connect_device(self._scanner_id.text_value.strip())
+
+    def _connect_device(self, device_id):
+        def connected(_result):
+            self._device_id = device_id
+            self._status.text = f"Connected to {device_id}. Ready to scan."
+
+        self._submit(f"Connecting to {device_id}…", lambda: self._scanner.connect(device_id), connected)
+
+    def _trigger_scan(self):
+        self._submit("Capturing one frame…", self._scanner.trigger,
+                     lambda frame: self._show_frame(frame, fit=not self._has_frame))
+
+    def _open_dialog(self):
+        dialog = gui.FileDialog(gui.FileDialog.OPEN, "Open point cloud", self.window.theme)
+        dialog.add_filter(".ply .pcd", "Point clouds (.ply, .pcd)")
+        dialog.set_on_cancel(self.window.close_dialog)
+
+        def opened(path):
+            self.window.close_dialog()
+            self.open_file(Path(path))
+
+        dialog.set_on_done(opened)
+        self.window.show_dialog(dialog)
+
+    def open_file(self, path):
+        self._submit("Loading point cloud…", lambda: load_point_cloud(path),
+                     lambda frame: self._show_frame(frame, fit=True))
+
+    def _show_frame(self, frame, *, fit):
+        self._viewport.show_frame(frame, fit=fit)
+        self._has_frame = True
+        self._source.text = frame.source if frame.frame_id is None else f"{frame.source} · frame {frame.frame_id}"
+        self._points.text = f"Valid points: {len(frame.points):,}"
+        self._time.text = "Capture: —" if frame.elapsed_ms is None else f"Capture: {frame.elapsed_ms:.0f} ms"
+        self._status.text = "Frame displayed. Drag to orbit · Shift-drag to pan · Scroll to zoom."
+        self.window.set_needs_layout()
+
+    def _begin_shutdown(self):
+        self._ready_to_close = True
+        self._submit("Releasing scanner…", self._scanner.disconnect, lambda _: None)
+
+    def _close(self):
+        if self._ready_to_close and self._pending is None:
+            self._worker.shutdown(wait=True)
+            return True
+        self._closing = True
+        if self._pending is None:
+            self._begin_shutdown()
+        else:
+            self._status.text = "Waiting for the current command…"
+            self._update_controls()
+        return False
