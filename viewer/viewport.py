@@ -72,7 +72,7 @@ class PointCloudViewport:
         if fit:
             self.reset_view()
 
-    def show_cad_overlay(self, mesh, pose):
+    def show_cad_overlay(self, mesh, pose, *, diagnostic=False):
         """Keep source mesh untouched; render transformed CAD transparently."""
         if self._cad_mesh is not None:
             self.widget.scene.remove_geometry("cad_overlay")
@@ -80,7 +80,11 @@ class PointCloudViewport:
         model = o3d.geometry.TriangleMesh(mesh)
         model.transform(np.asarray(pose, dtype=np.float64))
         model.compute_vertex_normals()
-        self.widget.scene.add_geometry("cad_overlay", model, self._cad_material)
+        material = rendering.MaterialRecord()
+        material.shader = "defaultLitTransparency"
+        material.base_color = ([1.0, 0.55, 0.05, 0.52] if diagnostic
+                               else [0.04, 0.95, 0.36, 0.45])
+        self.widget.scene.add_geometry("cad_overlay", model, material)
         self._cad_mesh = model
         self.widget.force_redraw()
 
