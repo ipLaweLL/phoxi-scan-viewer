@@ -118,6 +118,16 @@ class ScanTests(unittest.TestCase):
         np.testing.assert_equal(frame.points, [[5, 6, 7], [8, 9, 10]])
         np.testing.assert_allclose(frame.colors, [[0.2] * 3, [0.8] * 3])
 
+    def test_phoxi_uint16_intensity_is_not_almost_black(self):
+        # Typical PhoXi intensity range fits in uint16 but is far below 65535.
+        xyz = np.array([[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]])
+        intensity = np.array([26, 200, 550, 972], dtype=np.uint16)
+        frame = ScanFrame.from_arrays(xyz, intensity, source="PhoXi")
+        self.assertLess(frame.colors[0, 0], 0.05)
+        self.assertGreater(frame.colors[-1, 0], 0.95)
+        self.assertGreater(frame.colors[2, 0], 0.4)
+        self.assertLess(frame.colors[2, 0], 0.75)
+
     def test_unaligned_texture_and_empty_cloud(self):
         frame = ScanFrame.from_arrays([[5, 6, 7]], np.zeros((2, 2)), source="Test")
         self.assertIsNone(frame.colors)
