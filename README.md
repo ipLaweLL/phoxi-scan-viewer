@@ -83,6 +83,28 @@ Running a new scan clears any previous overlay. The localisation module is
 loaded only when requested; scanner viewing still works without its optional
 dependencies.
 
+## Candidate diagnostics for live-scene failures
+
+Each Locate Part run now retains **all refined candidates**, even when the
+final decision is `no_match` or `ambiguous`. Open **CANDIDATE DIAGNOSTICS**
+in the sidebar and choose hypothesis #1, #2, and so on. The panel lists
+CAD coverage, **global** scan-inlier fraction, inlier RMSE, mesh score
+(in the selector), reasons for failing overlap, CAD-origin translation and
+the 3x3 rotation matrix. **Export Candidate JSON** saves the entire result,
+including 4x4 transforms, for reproducible debugging.
+
+Check **Preview selected candidate (unverified)** to overlay a hypothesis
+in **orange**. This is a diagnostic visualization and **not** a verified 6D
+pose or robot command. A genuine accepted pose remains **green**.
+Changing candidate updates the orange preview. Unchecking preview restores
+a valid green pose if one exists; new scans and CAD changes clear results.
+
+A low global scan-inlier fraction can be caused by residual table points in
+the ROI. Passed overlap alone is not sufficient to resolve rotational
+symmetry: a round, featureless coin may still be `ambiguous`. We have
+**not** relaxed the registration thresholds or changed the solver. This
+feature is intended to expose why the solver rejected live scans.
+
 ## Tests
 
 Run the acquisition and frame-conversion tests with `python -m unittest discover -s tests`. These tests use a simulated PhoXi device. Live triggering requires a running PhoXi Control instance and a reachable scanner or file camera.
