@@ -42,18 +42,40 @@ class ScanFrame:
 
 
 def _display_colors(values):
-    # Float PhoXi textures may use sensor intensity units. Preserve RGB ratios
-    # with a shared white point and discard invalid values.
-    if np.issubdtype(values.dtype, np.integer):
-        white = np.iinfo(values.dtype).max
+    """Convert scanner intensity or RGB to display colours, never changing XYZ.
+
+    PhoXi intensity is often stored as uint16 although its useful dynamic
+    range occupies only a small fraction of [0, 65535]. Using the dtype
+    ceiling would render a perfectly valid scan almost black.
+    """
+    values = np.asarray(values)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return np.zeros((len(values), 3), dtype=np.float32)
+
+    if values.shape[1] == 1:
+        data = values.astype(np.float32)
+        if np.issubdtype(values.dtype, np.integer) and values.dtype.itemsize == 1:
+            # Byte intensities are already on a standard display scale.
+            scaled = data / 255.0
+        else:
+            # Ignore extreme intensities; do not let sparse bright points
+            # flatten the contrast of the whole cloud.
+            low, high = np.percentile(finite, [1, 99.5])
+            if high <= low:
+                scaled = np.clip(data / max(float(high), 1.0), 0, 1)
+            else:
+                scaled = (data - low) / (high - low)
+        scaled = np.clip(np.nan_to_num(scaled, nan=0, posinf=1, neginf=0), 0, 1)
+        return np.repeat(scaled, 3, axis=1)
+
+    # RGB: maintain ratios, avoiding per-channel percentile stretching.
+    if np.issubdtype(values.dtype, np.integer) and values.dtype.itemsize == 1:
+        white = 255.0
     else:
-        finite = values[np.isfinite(values)]
-        white = 1.0
-        if len(finite) and finite.max() > 1:
-            white = max(1.0, float(np.percentile(finite, 99.5)))
+        white = max(float(np.percentile(finite, 99.5)), 1.0)
     scaled = np.nan_to_num(values.astype(np.float32) / white, nan=0, posinf=1, neginf=0)
-    colors = np.clip(scaled, 0, 1)
-    return np.repeat(colors, 3, axis=1) if colors.shape[1] == 1 else colors
+    return np.clip(scaled, 0, 1)
 
 
 def load_point_cloud(path: Path) -> ScanFrame:
