@@ -361,25 +361,116 @@ class ScanViewer:
 
     def _show_localisation(self, payload):
         result, pose, candidate, mesh = payload
-        status = (result["assisted"] or result["mesh_only"])["status"]
+        selection = result["assisted"] if result.get("assisted") is not None else result["mesh_only"]
+        status = selection["status"]
         self._loc_status.text = f"Status: {status} ({result['candidate_count']} candidates)"
         self._loc_runtime.text = f"Runtime: {result['runtime_seconds']:.2f} s"
+        self._diagnostic_result = result
+        self._diagnostic_mesh = mesh
+        self._diagnostic_rows = diagnostic_rows(result)
+        self._candidate_selector.clear_items()
+        for row in self._diagnostic_rows:
+            verdict = "overlap OK" if row["passes_overlap"] else "overlap FAIL"
+            self._candidate_selector.add_item(
+                f"#{row['index'] + 1} | {verdict} | score {row['mesh_score']:.3f}")
+        if self._diagnostic_rows:
+            self._candidate_selector.selected_index = 0
+            self._select_candidate("", 0)
+        else:
+            self._candidate_selector.add_item("No candidates")
+            self._candidate_metrics.text = "No refined candidates."
+            self._candidate_reason.text = "Check ROI, geometry and voxel resolution."
         if candidate is not None:
             rmse = candidate.get("inlier_rmse_mm")
             error = "—" if rmse is None else f"{rmse:.3f} mm"
             self._loc_metrics.text = (
                 f"Coverage {candidate['model_coverage']:.1%} | "
-                f"Inliers {candidate['scan_inlier_fraction']:.1%} | "
-                f"RMSE {error}")
+                f"Inliers {candidate['scan_inlier_fraction']:.1%} | RMSE {error}")
+        else:
+            self._loc_metrics.text = "No accepted candidate; see diagnostics."
         if pose is not None and mesh is not None:
-            self._viewport.show_cad_overlay(mesh, pose)
+            self._viewport.show_cad_overlay(mesh, pose, diagnostic=False)
             x, y, z = pose[:3, 3]
             self._loc_pose.text = f"Translation: {x:.2f}, {y:.2f}, {z:.2f} mm"
-            self._status.text = "CAD overlay shows the accepted CAD-to-scan pose."
+            self._status.text = "GREEN: accepted 6D pose."
         else:
-            self._loc_pose.text = "No accepted pose; no overlay shown."
-            self._status.text = f"Localisation {status}: inspect scene and CAD."
+            self._loc_pose.text = "No accepted 6D pose."
+            self._status.text = "Use candidate diagnostics to inspect unverified hypotheses."
+        self._update_controls()
         self.window.set_needs_layout()
+
+    def _select_candidate(self, _label, index):
+        if not 0 <= index < len(self._diagnostic_rows):
+            return
+        row = self._diagnostic_rows[index]
+        rmse = row["rmse"]
+        self._candidate_metrics.text = (
+            f"Coverage {row['coverage']:.1%} | Inliers {row['inliers']:.1%} | "
+            f"RMSE {'—' if rmse is None else f'{rmse:.3f} mm'}")
+        reasons = row["reasons"]
+        self._candidate_reason.text = (
+            "Evidence: " + (", ".join(reasons) if reasons
+                             else "overlap OK; pose may still be ambiguous"))
+        import numpy as np
+        pose = np.asarray(row["pose"], dtype=float)
+        x, y, z = pose[:3, 3]
+        self._candidate_translation.text = f"CAD origin: {x:.2f}, {y:.2f}, {z:.2f} mm"
+        self._candidate_rotation.text = (
+            "R rows: " + " / ".join(
+                ",".join(f"{v:+.2f}" for v in matrix_row)
+                for matrix_row in pose[:3, :3]))
+        if self._preview_candidate.checked:
+            self._display_candidate(index)
+        self.window.set_needs_layout()
+
+    def _toggle_candidate_preview(self, checked):
+        if checked and self._diagnostic_rows:
+            self._display_candidate(self._candidate_selector.selected_index)
+            return
+        self._viewport.clear_cad_overlay()
+        if self._diagnostic_result is not None and self._diagnostic_mesh is not None:
+            selected = (self._diagnostic_result["assisted"]
+                        if self._diagnostic_result.get("assisted") is not None
+                        else self._diagnostic_result["mesh_only"])
+            if selected["status"] == "match":
+                import numpy as np
+                self._viewport.show_cad_overlay(
+                    self._diagnostic_mesh,
+                    np.asarray(selected["pose_cad_to_scan"]), diagnostic=False)
+
+    def _display_candidate(self, index):
+        if self._diagnostic_mesh is None or not 0 <= index < len(self._diagnostic_rows):
+            return
+        import numpy as np
+        pose = np.asarray(self._diagnostic_rows[index]["pose"], dtype=float)
+        if pose.shape != (4, 4) or not np.isfinite(pose).all():
+            self._status.text = "Candidate matrix invalid."
+            return
+        self._viewport.show_cad_overlay(self._diagnostic_mesh, pose, diagnostic=True)
+        self._status.text = f"ORANGE: candidate #{index + 1}, NOT VERIFIED."
+
+    def _export_candidate_json(self):
+        if self._diagnostic_result is None:
+            return
+        dialog = gui.FileDialog(gui.FileDialog.SAVE, "Export candidates", self.window.theme)
+        dialog.add_filter(".json", "JSON file (.json)")
+        dialog.set_on_cancel(self.window.close_dialog)
+
+        def save(path):
+            self.window.close_dialog()
+            if not path.lower().endswith(".json"):
+                path += ".json"
+            import json
+            try:
+                Path(path).write_text(
+                    json.dumps(self._diagnostic_result, indent=2, allow_nan=False),
+                    encoding="utf-8")
+                self._status.text = f"Candidate JSON saved: {path}"
+            except OSError as exc:
+                self.window.show_message_box("Export failed", str(exc))
+
+        dialog.set_on_done(save)
+        self.window.show_dialog(dialog)
 
     def _set_contrast(self, strategy):
         self._viewport.set_contrast(strategy)
