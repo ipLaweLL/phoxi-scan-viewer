@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
 
-from localisation.localise import load_mesh, localise
 
 
 def select_pose(result):
@@ -26,6 +25,8 @@ def select_pose(result):
 
 
 def locate_frame(frame, cad_path, *, voxel=1.0, viewpoint_is_origin=True):
+    from localisation.localise import load_mesh, localise
+
     cad_path = Path(cad_path)
     if not cad_path.is_file() or cad_path.suffix.lower() not in (".step", ".stp", ".stl"):
         raise ValueError("Choose an existing STEP, STP or STL CAD file.")
