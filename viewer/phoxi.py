@@ -75,6 +75,53 @@ class PhoXiScanner:
                 LOG.exception("Could not restore scanner settings after connection failed")
             raise
 
+
+    @staticmethod
+    def _profile_names(records):
+        """PhoXi returns profile metadata dictionaries, not just strings."""
+        names = []
+        for item in records:
+            name = item if isinstance(item, str) else (
+                item.get("name") or item.get("profile_name") or item.get("Name")
+                if isinstance(item, dict) else None
+            )
+            if isinstance(name, str) and name and name not in names:
+                names.append(name)
+        return names
+
+    def get_profiles(self):
+        if self._device is None:
+            raise RuntimeError("Connect a scanner first.")
+        return self._profile_names(self._device.profiles()), self._device.active_profile()
+
+    def set_profile(self, name):
+        if self._device is None:
+            raise RuntimeError("Connect a scanner first.")
+        available, _ = self.get_profiles()
+        if name not in available:
+            raise ValueError(f"Profile {name!r} is not available on the connected scanner.")
+        from phoxi_api import PhoXiDevice
+
+        device = self._device
+        was_acquiring = device.is_acquiring()
+        if was_acquiring:
+            device.stop_acquisition()
+        try:
+            device.set_active_profile(name)
+            # Profile activation may replace acquisition settings. Maintain the
+            # viewer's software-trigger contract without touching the startup profile.
+            if device.trigger_mode() != PhoXiDevice.TriggerMode.SOFTWARE:
+                device.set_trigger_mode(PhoXiDevice.TriggerMode.SOFTWARE)
+            if not device.info().get("file_camera"):
+                settings = device.frame_settings()
+                if settings is not None:
+                    settings.PointCloud.value = True
+                    settings.Texture.value = True
+        finally:
+            if was_acquiring and not device.is_acquiring():
+                device.start_acquisition()
+        return self.get_profiles()
+
     def trigger(self):
         if self._device is None:
             raise RuntimeError("Connect a scanner first.")
