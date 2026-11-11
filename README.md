@@ -37,6 +37,19 @@ To test with a saved cloud without running PhoXi Control:
 
 The viewer's scan action displays the acquired frame. Run the [original CLI](localisation/README.md) independently when you need to test CAD localisation.
 
+## Visualization controls
+
+The right-hand panel scrolls and groups controls into collapsible Scanner, Scanner Profiles, Visualization, Depth Contrast, and Frame Information sections.
+
+- Texture displays scan intensity/RGB with gamma adjustment. Plain White displays neutral geometry.
+- Depth - Grayscale and Depth - Hue colorize scanner Z coordinates (millimetres). For a flat scene with little depth variation, Smart stretches the central 1st–99th percentile Z range, Full uses the entire observed range, and Apply Manual Range accepts explicit minimum and maximum Z bounds. These are **display mappings only** and do not change the XYZ data.
+- Gamma changes the brightness distribution for Texture and depth modes (0.2–3.0).
+- Screenshot exports the current 3D viewport as PNG (not the entire application window). Coordinate axes can be shown or hidden.
+- Frame Information reports valid point count, acquisition time, and observed Z range.
+- Color depth represents scanner-coordinate Z, **not** physical distance from the current orbit camera or plane-relative height. Printed labels may only be visible in Texture mode.
+
+## Tests
+
 Run the acquisition and frame-conversion tests with `python -m unittest discover -s tests`. These tests use a simulated PhoXi device. Live triggering requires a running PhoXi Control instance and a reachable scanner or file camera.
 
 [Photoneo Python API reference](https://docs.photoneo.com/docs/3d_sensors/1.18/wrappers/phoxi_python_api/1.1.1/phoxi_api.html)
