@@ -6,6 +6,7 @@ from pathlib import Path
 from .frames import load_point_cloud
 from .phoxi import PhoXiScanner
 from .localisation import locate_frame, diagnostic_rows
+from .segmentation import segment_plane, preview_colors
 from .viewport import PointCloudViewport, gui
 
 LOG = logging.getLogger(__name__)
@@ -29,6 +30,8 @@ class ScanViewer:
         self._diagnostic_result = None
         self._diagnostic_mesh = None
         self._diagnostic_rows = []
+        self._segmentation = None
+        self._seg_view = 'Raw'
 
         em = self.window.theme.font_size
         spacing = int(0.55 * em)
@@ -125,6 +128,30 @@ class ScanViewer:
         for label in (self._source, self._points, self._time, self._zrange):
             self._frame_section.add_child(label)
 
+        self._seg_section = gui.CollapsableVert("PREPROCESSING / PLANE", spacing)
+        self._sidebar.add_child(self._seg_section)
+        self._seg_section.add_child(gui.Label("RANSAC plane threshold (mm)"))
+        self._plane_threshold = gui.NumberEdit(gui.NumberEdit.DOUBLE)
+        self._plane_threshold.set_value(0.35)
+        self._seg_section.add_child(self._plane_threshold)
+        self._run_segmentation = self._button(
+            "Detect Plane", self._detect_plane, self._seg_section)
+        self._seg_view_selector = gui.Combobox()
+        for item in ("Raw", "Combined", "Plane", "Foreground"):
+            self._seg_view_selector.add_item(item)
+        self._seg_view_selector.set_on_selection_changed(self._show_seg_view)
+        self._seg_section.add_child(self._seg_view_selector)
+        self._seg_count = gui.Label("Plane: — | Foreground: —")
+        self._seg_equation = gui.Label("Equation: —")
+        self._seg_warning = gui.Label("Plane identity unverified: inspect all views.")
+        for label in (self._seg_count, self._seg_equation, self._seg_warning):
+            self._seg_section.add_child(label)
+        self._use_foreground = gui.Checkbox("Use inspected foreground for Locate Part")
+        self._use_foreground.set_on_checked(self._set_foreground_choice)
+        self._seg_section.add_child(self._use_foreground)
+        self._seg_section.add_child(gui.Label(
+            "Do not enable if RANSAC selected the coin face."))
+
         self._localisation_section = gui.CollapsableVert("SINGLE-PART LOCALISATION", spacing)
         self._sidebar.add_child(self._localisation_section)
         self._cad_label = gui.Label("CAD: none")
@@ -215,6 +242,10 @@ class ScanViewer:
         self._voxel_input.enabled = ready
         self._viewpoint_origin.enabled = ready
         self._locate.enabled = ready and self._current_frame is not None and self._cad_path is not None
+        self._run_segmentation.enabled = ready and self._current_frame is not None
+        self._plane_threshold.enabled = ready
+        self._seg_view_selector.enabled = ready and self._segmentation is not None
+        self._use_foreground.enabled = ready and self._segmentation is not None
         self._clear_overlay.enabled = ready and self._has_frame
         self._candidate_selector.enabled = ready and bool(self._diagnostic_rows)
         self._preview_candidate.enabled = ready and bool(self._diagnostic_rows)
@@ -314,6 +345,69 @@ class ScanViewer:
         self._submit(f"Applying scanner profile {name}…",
                      lambda: self._scanner.set_profile(name), self._show_profiles)
 
+    def _detect_plane(self):
+        if self._current_frame is None:
+            return
+        threshold = self._plane_threshold.double_value
+        frame = self._current_frame
+        self._use_foreground.checked = False
+        self._segmentation = None
+        self._clear_localisation()
+        self._submit("Fitting largest plane with RANSAC...",
+                     lambda: segment_plane(frame, threshold),
+                     self._receive_segmentation)
+
+    def _receive_segmentation(self, segmentation):
+        self._segmentation = segmentation
+        self._seg_count.text = (
+            f"Plane {segmentation.plane_count:,} ({segmentation.plane_fraction:.1%})"
+            f" | Foreground {segmentation.foreground_count:,}")
+        a, b, c, d = segmentation.equation
+        self._seg_equation.text = f"Plane: {a:+.3f}x {b:+.3f}y {c:+.3f}z {d:+.1f} = 0"
+        ex, ey, ez = segmentation.plane_extent_mm
+        self._seg_warning.text = (
+            f"Plane extent XYZ: {ex:.1f}, {ey:.1f}, {ez:.1f} mm")
+        self._seg_view_selector.selected_index = 1
+        self._show_seg_view("Combined", 1)
+        self._status.text = (
+            "Review red/orange plane vs cyan foreground BEFORE using segmentation.")
+        self._update_controls()
+        self.window.set_needs_layout()
+
+    def _show_seg_view(self, name, _index):
+        self._seg_view = name
+        if self._current_frame is None:
+            return
+        if name == "Raw" or self._segmentation is None:
+            frame = self._current_frame
+        elif name == "Combined":
+            frame = preview_colors(self._segmentation)
+        else:
+            frame = self._segmentation.frame(name)
+        # Preview only: don't change _current_frame or the camera viewpoint.
+        self._viewport.show_frame(frame, fit=False)
+        self._preview_candidate.checked = False
+        self._status.text = f"Viewing {name.lower()} — source scan is unchanged."
+
+    def _set_foreground_choice(self, enabled):
+        if enabled and self._segmentation is None:
+            self._use_foreground.checked = False
+            return
+        # Existing pose metrics/overlays belong to the previous input cloud.
+        self._clear_localisation()
+        self._status.text = (
+            "Foreground chosen for next localisation; verify the plane is TABLE."
+            if enabled else "Raw scan chosen for next localisation.")
+
+    def _reset_segmentation(self):
+        self._segmentation = None
+        self._seg_view = "Raw"
+        self._use_foreground.checked = False
+        self._seg_view_selector.selected_index = 0
+        self._seg_count.text = "Plane: — | Foreground: —"
+        self._seg_equation.text = "Equation: —"
+        self._seg_warning.text = "Plane identity unverified: inspect all views."
+
     def _open_cad_dialog(self):
         dialog = gui.FileDialog(gui.FileDialog.OPEN, "Choose CAD model", self.window.theme)
         dialog.add_filter(".step .stp .stl", "CAD files (.step, .stp, .stl)")
@@ -355,7 +449,9 @@ class ScanViewer:
         if not (0.05 <= voxel <= 100):
             self.window.show_message_box("Invalid voxel size", "Voxel must be between 0.05 and 100 mm.")
             return
-        frame = self._current_frame
+        frame = (self._segmentation.frame("Foreground")
+                 if self._segmentation is not None and self._use_foreground.checked
+                 else self._current_frame)
         cad = self._cad_path
         viewpoint = self._viewpoint_origin.checked
         self._clear_localisation()
@@ -537,6 +633,7 @@ class ScanViewer:
                      lambda frame: self._show_frame(frame, fit=True))
 
     def _show_frame(self, frame, *, fit):
+        self._reset_segmentation()
         self._current_frame = frame
         self._clear_localisation()
         self._viewport.show_frame(frame, fit=fit)
