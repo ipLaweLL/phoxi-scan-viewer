@@ -20,6 +20,8 @@ class ScanViewer:
         self._ready_to_close = False
         self._device_id = None
         self._has_frame = False
+        self._profile_names = []
+        self._active_profile = None
         self._viewport = PointCloudViewport(self.window.renderer)
 
         em = self.window.theme.font_size
@@ -38,12 +40,19 @@ class ScanViewer:
         self._connect = self._button("Connect", self._toggle_connection)
         self._trigger = self._button("Trigger Scan", self._trigger_scan)
         self._trigger.background_color = gui.Color(0.16, 0.37, 0.66)
+
+        self._sidebar.add_fixed(int(em))
+        self._sidebar.add_child(gui.Label("SCANNER PROFILE"))
+        self._profiles = gui.Combobox()
+        self._sidebar.add_child(self._profiles)
+        self._apply_profile = self._button("Apply Profile", self._change_profile)
+        self._reload_profiles = self._button("Refresh Profiles", self._refresh_profiles)
         self._open = self._button("Open PLY / PCD", self._open_dialog)
 
         self._sidebar.add_fixed(int(em))
         self._sidebar.add_child(gui.Label("3D VIEW"))
         self._mode = gui.Combobox()
-        for mode in ("Texture", "White", "Depth"):
+        for mode in ("Texture", "White", "Depth", "Depth - Grayscale"):
             self._mode.add_item(mode)
         self._mode.set_on_selection_changed(lambda mode, _index: self._viewport.set_mode(mode))
         self._sidebar.add_child(self._mode)
@@ -54,6 +63,8 @@ class ScanViewer:
         size.set_on_value_changed(self._viewport.set_point_size)
         self._sidebar.add_child(size)
         self._reset = self._button("Reset View", self._viewport.reset_view)
+        self._sidebar.add_child(gui.Label("Intensity / depth"))
+        self._sidebar.add_child(gui.Label("Texture uses scan intensity; depth uses Z (mm)."))
 
         self._sidebar.add_fixed(int(em))
         self._sidebar.add_child(gui.Label("FRAME"))
@@ -94,6 +105,10 @@ class ScanViewer:
         self._connect.enabled = ready and (connected or bool(self._scanner_id.text_value.strip()))
         self._connect.text = "Disconnect" if connected else "Connect"
         self._trigger.enabled = ready and connected
+        self._profiles.enabled = ready and connected and bool(self._profile_names)
+        self._reload_profiles.enabled = ready and connected
+        self._apply_profile.enabled = ready and connected and bool(self._profile_names)
+
         self._open.enabled = ready
         self._reset.enabled = self._mode.enabled = self._has_frame
 
@@ -144,6 +159,9 @@ class ScanViewer:
     def _toggle_connection(self):
         if self._device_id is not None:
             self._device_id = None
+            self._profile_names = []
+            self._active_profile = None
+            self._profiles.clear_items()
             self._submit("Disconnecting…", self._scanner.disconnect,
                          lambda _: setattr(self._status, "text", "Scanner disconnected."))
         else:
@@ -153,8 +171,36 @@ class ScanViewer:
         def connected(_result):
             self._device_id = device_id
             self._status.text = f"Connected to {device_id}. Ready to scan."
+            self._refresh_profiles()
 
         self._submit(f"Connecting to {device_id}…", lambda: self._scanner.connect(device_id), connected)
+
+    def _refresh_profiles(self):
+        self._submit("Reading scanner profiles…", self._scanner.get_profiles,
+                     self._show_profiles)
+
+    def _show_profiles(self, result):
+        names, active = result
+        self._profile_names = names
+        self._active_profile = active
+        self._profiles.clear_items()
+        for name in names:
+            self._profiles.add_item(name)
+        if names:
+            self._profiles.selected_index = names.index(active) if active in names else 0
+        self._status.text = (f"Active profile: {active or 'none'} · {len(names)} available."
+                             if names else "No scanner profiles available.")
+        self._update_controls()
+
+    def _change_profile(self):
+        if not self._profile_names:
+            return
+        name = self._profile_names[self._profiles.selected_index]
+        if name == self._active_profile:
+            self._status.text = f"Profile {name} is already active."
+            return
+        self._submit(f"Applying scanner profile {name}…",
+                     lambda: self._scanner.set_profile(name), self._show_profiles)
 
     def _trigger_scan(self):
         self._submit("Capturing one frame…", self._scanner.trigger,
