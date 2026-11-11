@@ -18,6 +18,19 @@ class ScannerDevice:
             PointCloud=SimpleNamespace(value=False), Texture=SimpleNamespace(value=False)
         )
         self.closed = False
+        self.profile = "Default"
+        self.profile_changes = []
+
+    def profiles(self):
+        return [{"name": "Default"}, {"name": "High Quality"}]
+
+    def active_profile(self):
+        return self.profile
+
+    def set_active_profile(self, name):
+        assert not self.acquiring
+        self.profile_changes.append(name)
+        self.profile = name
 
     def info(self):
         return {"file_camera": False}
@@ -80,6 +93,23 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(device.mode, PhoXiDevice.TriggerMode.FREERUN)
         self.assertFalse(device.outputs.PointCloud.value)
         self.assertFalse(device.outputs.Texture.value)
+
+    def test_profiles_discovery_and_apply(self):
+        device = ScannerDevice()
+        scanner = PhoXiScanner()
+        with patch("phoxi_api.PhoXiControl") as control:
+            control.return_value.is_phoxicontrol_running.return_value = True
+            control.return_value.connect.return_value = device
+            scanner.connect("TEST-1")
+            self.assertEqual(scanner.get_profiles(), (["Default", "High Quality"], "Default"))
+            self.assertEqual(scanner.set_profile("High Quality"),
+                             (["Default", "High Quality"], "High Quality"))
+            self.assertEqual(device.profile_changes, ["High Quality"])
+            self.assertTrue(device.acquiring)
+            self.assertEqual(device.mode, PhoXiDevice.TriggerMode.SOFTWARE)
+            with self.assertRaises(ValueError):
+                scanner.set_profile("not present")
+            scanner.disconnect()
 
     def test_grayscale_filters_invalid_xyz_and_keeps_color_alignment(self):
         xyz = [[[0, 0, 0], [5, 6, 7]], [[np.nan, 3, 4], [8, 9, 10]]]
