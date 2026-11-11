@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .frames import load_point_cloud
 from .phoxi import PhoXiScanner
-from .localisation import locate_frame
+from .localisation import locate_frame, diagnostic_rows
 from .viewport import PointCloudViewport, gui
 
 LOG = logging.getLogger(__name__)
@@ -26,6 +26,9 @@ class ScanViewer:
         self._viewport = PointCloudViewport(self.window.renderer)
         self._cad_path = None
         self._current_frame = None
+        self._diagnostic_result = None
+        self._diagnostic_mesh = None
+        self._diagnostic_rows = []
 
         em = self.window.theme.font_size
         spacing = int(0.55 * em)
@@ -147,6 +150,27 @@ class ScanViewer:
                       self._loc_pose, self._loc_runtime):
             self._localisation_section.add_child(label)
 
+        self._candidate_section = gui.CollapsableVert("CANDIDATE DIAGNOSTICS", spacing)
+        self._sidebar.add_child(self._candidate_section)
+        self._candidate_section.add_child(gui.Label("ORANGE = unverified hypothesis"))
+        self._candidate_selector = gui.Combobox()
+        self._candidate_selector.add_item("No candidates")
+        self._candidate_selector.set_on_selection_changed(self._select_candidate)
+        self._candidate_section.add_child(self._candidate_selector)
+        self._candidate_metrics = gui.Label("No results")
+        self._candidate_reason = gui.Label("Evidence: —")
+        self._candidate_translation = gui.Label("CAD origin (mm): —")
+        self._candidate_rotation = gui.Label("Rotation: —")
+        for label in (self._candidate_metrics, self._candidate_reason,
+                      self._candidate_translation, self._candidate_rotation):
+            self._candidate_section.add_child(label)
+        self._preview_candidate = gui.Checkbox("Preview selected candidate (unverified)")
+        self._preview_candidate.set_on_checked(self._toggle_candidate_preview)
+        self._candidate_section.add_child(self._preview_candidate)
+        self._export_diagnostics = self._button("Export Candidate JSON",
+                                                self._export_candidate_json,
+                                                self._candidate_section)
+
         self._status = gui.Label("Discover a scanner or open a point cloud.")
         self._status.background_color = gui.Color(0.075, 0.095, 0.125)
         for widget in (self._viewport.widget, self._sidebar, self._status):
@@ -188,6 +212,9 @@ class ScanViewer:
         self._viewpoint_origin.enabled = ready
         self._locate.enabled = ready and self._current_frame is not None and self._cad_path is not None
         self._clear_overlay.enabled = ready and self._has_frame
+        self._candidate_selector.enabled = ready and bool(self._diagnostic_rows)
+        self._preview_candidate.enabled = ready and bool(self._diagnostic_rows)
+        self._export_diagnostics.enabled = ready and self._diagnostic_result is not None
         self._reset.enabled = self._mode.enabled = self._has_frame
         for control in (self._screenshot, self._smart, self._full, self._manual_button,
                         self._min_depth, self._max_depth, self._gamma_slider, self._axes):
@@ -300,6 +327,16 @@ class ScanViewer:
 
     def _clear_localisation(self):
         self._viewport.clear_cad_overlay()
+        self._diagnostic_result = None
+        self._diagnostic_mesh = None
+        self._diagnostic_rows = []
+        self._preview_candidate.checked = False
+        self._candidate_selector.clear_items()
+        self._candidate_selector.add_item("No candidates")
+        self._candidate_metrics.text = "No results"
+        self._candidate_reason.text = "Evidence: —"
+        self._candidate_translation.text = "CAD origin (mm): —"
+        self._candidate_rotation.text = "Rotation: —"
         self._loc_status.text = "Status: not run"
         self._loc_metrics.text = "Coverage / inliers / RMSE: —"
         self._loc_pose.text = "Translation (mm): —"
