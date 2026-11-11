@@ -52,7 +52,7 @@ class ScanViewer:
         self._sidebar.add_fixed(int(em))
         self._sidebar.add_child(gui.Label("3D VIEW"))
         self._mode = gui.Combobox()
-        for mode in ("Texture", "White", "Depth", "Depth - Grayscale"):
+        for mode in ("Texture", "Plain White", "Depth - Grayscale", "Depth - Hue"):
             self._mode.add_item(mode)
         self._mode.set_on_selection_changed(lambda mode, _index: self._viewport.set_mode(mode))
         self._sidebar.add_child(self._mode)
@@ -70,8 +70,8 @@ class ScanViewer:
         self._sidebar.add_child(gui.Label("FRAME"))
         self._source = gui.Label("No frame")
         self._points = gui.Label("Valid points: —")
-        self._time = gui.Label("Capture: —")
-        for label in (self._source, self._points, self._time):
+        self._time = gui.Label("Capture: —")\n        self._zrange = gui.Label("Z range: —")
+        for label in (self._source, self._points, self._time, self._zrange):
             self._sidebar.add_child(label)
 
         self._status = gui.Label("Discover a scanner or open a point cloud.")
@@ -111,6 +111,9 @@ class ScanViewer:
 
         self._open.enabled = ready
         self._reset.enabled = self._mode.enabled = self._has_frame
+        for control in (self._screenshot, self._smart, self._full, self._manual_button,
+                        self._min_depth, self._max_depth, self._gamma_slider, self._axes):
+            control.enabled = self._has_frame
 
     def _submit(self, label, work, complete):
         self._status.text = label
@@ -202,6 +205,44 @@ class ScanViewer:
         self._submit(f"Applying scanner profile {name}…",
                      lambda: self._scanner.set_profile(name), self._show_profiles)
 
+    def _set_contrast(self, strategy):
+        self._viewport.set_contrast(strategy)
+        self._status.text = f"Depth contrast: {strategy}."
+
+    def _apply_manual_range(self):
+        try:
+            self._viewport.set_manual_range(
+                self._min_depth.double_value, self._max_depth.double_value)
+            self._status.text = "Manual depth range applied."
+        except ValueError as exc:
+            self.window.show_message_box("Invalid depth range", str(exc))
+
+    def _reset_gamma_value(self):
+        self._gamma_slider.double_value = 1.0
+        self._viewport.set_gamma(1.0)
+
+    def _save_screenshot(self):
+        dialog = gui.FileDialog(gui.FileDialog.SAVE, "Save screenshot", self.window.theme)
+        dialog.add_filter(".png", "PNG image (.png)")
+        dialog.set_on_cancel(self.window.close_dialog)
+
+        def done(path):
+            self.window.close_dialog()
+            if not path.lower().endswith(".png"):
+                path += ".png"
+
+            def completed(ok):
+                gui.Application.instance.post_to_main_thread(
+                    self.window, lambda: setattr(
+                        self._status, "text",
+                        f"Screenshot saved: {path}" if ok else "Screenshot export failed."))
+
+            self._viewport.save_screenshot(path, completed)
+            self._status.text = "Capturing screenshot…"
+
+        dialog.set_on_done(done)
+        self.window.show_dialog(dialog)
+
     def _trigger_scan(self):
         self._submit("Capturing one frame…", self._scanner.trigger,
                      lambda frame: self._show_frame(frame, fit=not self._has_frame))
@@ -228,6 +269,8 @@ class ScanViewer:
         self._source.text = frame.source if frame.frame_id is None else f"{frame.source} · frame {frame.frame_id}"
         self._points.text = f"Valid points: {len(frame.points):,}"
         self._time.text = "Capture: —" if frame.elapsed_ms is None else f"Capture: {frame.elapsed_ms:.0f} ms"
+        z = frame.points[:, 2]
+        self._zrange.text = f"Z range: {z.min():.1f} .. {z.max():.1f} mm"
         self._status.text = "Frame displayed. Drag to orbit · Shift-drag to pan · Scroll to zoom."
         self.window.set_needs_layout()
 
